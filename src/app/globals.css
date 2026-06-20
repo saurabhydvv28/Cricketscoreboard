@@ -1,0 +1,103 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   Design tokens — "Stadium Ledger" theme
+   Grounded in cricket broadcast graphics & stadium LED scoreboards:
+   deep pitch-night navy/green base, live-amber accent (stump LEDs),
+   tabular-mono numerals for scores like a real scoreboard ticker.
+   ============================================================ */
+:root {
+  /* Base surfaces */
+  --background: 152 28% 6%;        /* near-black deep pitch green */
+  --foreground: 60 9% 92%;         /* warm off-white */
+  --surface: 152 22% 9%;           /* card surface, slightly lifted */
+  --surface-raised: 152 18% 13%;   /* hover / raised surface */
+  --border-subtle: 152 14% 18%;
+
+  /* Brand */
+  --pitch-green: 142 45% 28%;      /* turf green */
+  --pitch-green-deep: 142 50% 14%;
+  --stump-amber: 38 96% 56%;       /* live / accent — stump LED amber */
+  --stump-amber-dim: 38 70% 40%;
+  --boundary-red: 358 75% 56%;     /* six/four/wicket accent */
+  --ball-cream: 42 38% 88%;        /* cricket ball seam cream, used sparingly */
+
+  /* Semantic */
+  --primary: 38 96% 56%;
+  --primary-foreground: 152 28% 6%;
+  --secondary: 152 22% 14%;
+  --secondary-foreground: 60 9% 92%;
+  --muted: 152 14% 16%;
+  --muted-foreground: 60 6% 62%;
+  --accent: 142 45% 28%;
+  --accent-foreground: 60 9% 95%;
+  --destructive: 358 75% 56%;
+  --destructive-foreground: 60 9% 95%;
+  --ring: 38 96% 56%;
+  --radius: 0.5rem;
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border-subtle));
+  }
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-feature-settings: "cv11", "ss01";
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Scoreboard ticker numerals — tabular, monospaced, broadcast-style */
+  .scoreboard-numerals {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+    letter-spacing: -0.02em;
+  }
+
+  .bg-surface {
+    background-color: hsl(var(--surface));
+  }
+  .bg-surface-raised {
+    background-color: hsl(var(--surface-raised));
+  }
+  .border-subtle {
+    border-color: hsl(var(--border-subtle));
+  }
+  .text-amber {
+    color: hsl(var(--stump-amber));
+  }
+  .bg-amber {
+    background-color: hsl(var(--stump-amber));
+  }
+  .text-boundary {
+    color: hsl(var(--boundary-red));
+  }
+  .bg-boundary {
+    background-color: hsl(var(--boundary-red));
+  }
+
+  /* Live pulse indicator for live matches */
+  .live-pulse {
+    position: relative;
+  }
+  .live-pulse::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 9999px;
+    background-color: hsl(var(--boundary-red) / 0.4);
+    animation: pulse-ring 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+  @keyframes pulse-ring {
+    0%, 100% { opacity: 0.6; transform: scale(1); }
+    50% { opacity: 0; transform: scale(1.6); }
+  }
+}
