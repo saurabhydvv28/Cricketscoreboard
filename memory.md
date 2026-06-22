@@ -1,7 +1,7 @@
 # Project Memory: Local Cricket Scoreboard
 
 ## Project Overview
-A full-stack Local Cricket Match Scoreboard web application built with Next.js 14 (App Router), Tailwind CSS, hand-built shadcn-style components, and Supabase (PostgreSQL + Auth + Realtime + RLS). The app supports two user roles: public viewers/players who can register and view live scores/leaderboards, and admins who can create matches and score ball-by-ball in real-time. Project scaffolding, design system, full auth flows, admin match creation, and the complete ball-by-ball scoring console are all implemented and wired to real Supabase data. The real-time public scoreboard (Supabase Realtime subscriptions) and the leaderboard dashboard are not yet implemented.
+A full-stack Local Cricket Match Scoreboard web application built with Next.js 14 (App Router), Tailwind CSS, hand-built shadcn-style components, and Supabase (PostgreSQL + Auth + Realtime + RLS). The app supports two user roles: public viewers/players who can register and view live scores/leaderboards, and admins who can create matches and score ball-by-ball in real-time. All core features are now implemented: scaffolding, design system, auth, admin match creation, ball-by-ball scoring console, and real-time public scoreboard. Only the leaderboard dashboard (Step 7) remains.
 
 ## System Configuration & Tech Stack
 - **Frontend:** Next.js 14.2.35 (App Router), TypeScript, Tailwind CSS v3, hand-built shadcn-style components (Radix UI primitives + cva), Lucide React icons
@@ -54,10 +54,9 @@ A full-stack Local Cricket Match Scoreboard web application built with Next.js 1
   - **Scoring logic hand-verified with isolated `tsx` trace scripts before considering Step 5 done** (scripts were written, run, and deleted — not committed to the repo, but documented here): (1) a full over with mixed run values, a wide, and a wicket — confirmed correct strike rotation, correct over-completion bowler reset, correct ball-by-ball dot display including the wide; (2) innings 1 → innings 2 transition — confirmed `target = innings1Score + 1` and that `freshInningsLiveData(target)` correctly seeds the new innings; (3) target-chase early finish — confirmed innings 2 ends the instant the score reaches/exceeds target, without waiting for the over or all-out; (4) all-out detection with a 3-player roster — confirmed innings ends at wickets = rosterSize - 1 (last-man-stands rule), not rosterSize; (5) the run-out strike-rotation-then-dismissal-clearing order — initially looked like a bug, traced by hand, confirmed correct (see edge case note below for the full reasoning, since it's genuinely non-obvious).
 
 ## Current Work in Progress
-- [ ] Step 6 next: Public scoreboard page with Supabase Realtime subscription
+- [ ] Step 7 next: Leaderboard dashboard — Top 5 for Orange Cap, Purple Cap, Strike Rate, Economy Rate
 
 ## Remaining Backlog
-- [ ] Step 6: Public scoreboard page with Supabase Realtime subscription
 - [ ] Step 7: Leaderboard dashboard — Top 5 for Orange Cap, Purple Cap, Strike Rate, Economy Rate
 
 ## Discovered Edge Cases & Technical Nuances
@@ -94,3 +93,20 @@ A full-stack Local Cricket Match Scoreboard web application built with Next.js 1
 - The scoring console deliberately does NOT wrap run/extras/wicket buttons in a `<form>` — every action goes through `useTransition` and calls a server action directly from an `onClick` handler. A form-based approach would need a submit step or per-button hidden submit triggers; direct `useTransition` calls give the same pending-state UX (disabling buttons during the request) without that indirection, and matches the pattern already established for `TossForm`/`DeleteMatchButton` in Step 4.
 
 
+
+## Step 6 Completed Features
+- [x] Step 6: Real-time public scoreboard — Supabase Realtime subscriptions + full match view
+  - `src/hooks/use-realtime-match.ts` — subscribes to two Realtime channels: UPDATE on matches (fires on every ball, delivers new live_data), INSERT on ball_by_ball_logs (for commentary strip). Returns { match, recentBalls, isConnected }.
+  - `src/components/scoreboard/live-scoreboard.tsx` — client component using useRealtimeMatch. SSR-hydrated from server props (no flash). Renders: connection indicator, ScoreboardTicker, innings 2 target strip, innings 1 scorecard, match result banner, at-the-crease card, ball commentary, and completed innings 2 scorecard.
+  - `src/components/scoreboard/balls-commentary.tsx` — per-ball commentary with colored dot indicators, over.ball refs, and natural-language descriptions (e.g. "SIX! R. Sharma off V. Patel", "V. Kohli caught by S. Gill off M. Shami!").
+  - `src/components/scoreboard/innings-summary.tsx` — batting and bowling scorecards computed from BallByBallLog[] + player name map. Pure component, no extra queries. Batting: runs/balls/4s/6s/SR/dismissal. Bowling: overs/runs/wickets/economy.
+  - `src/app/matches/[id]/page.tsx` — replaces Step 4 placeholder. Server component fetches full match, recent balls, innings1 balls, and all player names, passes to LiveScoreboard. Has generateMetadata() for SEO.
+  - `src/app/matches/page.tsx` — upgraded to a proper match directory: Live Now / Upcoming / Results sections, live scores on listing cards from live_data JSONB.
+  - `supabase/migrations/002_enable_realtime.sql` — ALTER PUBLICATION supabase_realtime for both tables. MUST be applied in Supabase SQL Editor for live updates to work.
+  - Build clean: 17 routes, 0 errors. /matches/[id] is 71.2kB (Realtime client included, expected).
+
+## Step 6 Edge Cases & Notes
+- The Realtime hook uses the browser client (createClient from lib/supabase/client.ts), NOT the server client — WebSocket connections must run client-side. The server component handles initial SSR fetch, the hook takes over for live updates.
+- Map iteration with for...of requires ES2015+ target. The tsconfig here compiles to ES5 by default, so Map.entries() and Map.values() must use Array.from() explicitly rather than destructured for...of. Caught at build time as a TS error.
+- The matches listing page shows live scores directly from live_data JSONB without extra queries — a key design payoff from the Step 1 decision to denormalize volatile state into live_data rather than requiring ball-log aggregation for every scoreboard render.
+- 002_enable_realtime.sql must be run separately from 001_initial_schema.sql because the supabase_realtime publication already exists in hosted Supabase but the ADD TABLE statements need the tables to exist first (chicken-and-egg if run together in a single migration).

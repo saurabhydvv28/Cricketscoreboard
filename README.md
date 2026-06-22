@@ -50,13 +50,16 @@ cricket-scoreboard/
 
 This creates the `profiles`, `matches`, and `ball_by_ball_logs` tables, all Row Level Security policies, the `is_admin()` helper function, the auth trigger that auto-creates a profile with a unique Player ID on signup, and 6 PostgreSQL views for leaderboards.
 
-### Enable Realtime (required for live scoreboard in later steps)
+### Enable Realtime (required for live scoreboard)
 
-In **Supabase Dashboard → Database → Replication**, enable Realtime for `public.matches` and `public.ball_by_ball_logs`, or run:
+In **Supabase Dashboard → SQL Editor**, run `supabase/migrations/002_enable_realtime.sql`:
+
 ```sql
 ALTER PUBLICATION supabase_realtime ADD TABLE public.matches;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.ball_by_ball_logs;
 ```
+
+Or enable via **Database → Replication** in the dashboard. Without this step the public scoreboard will SSR correctly on load but won't receive live WebSocket updates — viewers will need to refresh manually.
 
 ### Allow the email confirmation redirect URL
 
@@ -170,7 +173,7 @@ WHERE player_id = 'their-player-id-here';
 - [x] Step 3 — Auth (Signup / Login / Logout / Email confirmation / Profile)
 - [x] Step 4 — Admin: create matches, assemble teams
 - [x] Step 5 — Admin: ball-by-ball scoring console
-- [ ] Step 6 — Public: live scoreboard with Realtime
+- [x] Step 6 — Public: live scoreboard with Realtime
 - [ ] Step 7 — Leaderboards dashboard
 
 See `memory.md` for full implementation notes and discovered edge cases.
