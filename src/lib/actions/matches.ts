@@ -72,14 +72,28 @@ export async function createPlayer(
   _prevState: CreatePlayerState,
   formData: FormData
 ): Promise<CreatePlayerState> {
-  await requireAdmin()
+  try {
+    await requireAdmin()
+  } catch {
+    return { error: 'Admin session expired. Please log in again.' }
+  }
 
   const fullName = (formData.get('fullName') as string)?.trim()
   if (!fullName || fullName.length < 2) {
-    return { error: 'Enter the player\'s full name.' }
+    return { error: "Enter the player's full name." }
   }
 
-  const supabase = createAdminClient()
+  let supabase
+  try {
+    supabase = createAdminClient()
+  } catch {
+    return {
+      error:
+        'Server configuration error: SUPABASE_SERVICE_ROLE_KEY is not set. ' +
+        'Add it to your Vercel Environment Variables and redeploy.',
+    }
+  }
+
   const playerId = generate_player_id(fullName)
 
   // Check for duplicate name
@@ -112,13 +126,30 @@ export async function createPlayer(
 
 // ----------------------------------------------------------------
 // Delete a player profile (admin only)
+// Returns error string on failure instead of throwing, so the client
+// can display it rather than crashing the page.
 // ----------------------------------------------------------------
-export async function deletePlayer(playerId: string) {
-  await requireAdmin()
-  const supabase = createAdminClient()
-  await supabase.from('profiles').delete().eq('id', playerId)
+export async function deletePlayer(playerId: string): Promise<string | null> {
+  try {
+    await requireAdmin()
+  } catch {
+    return 'Admin session expired. Please log in again.'
+  }
+
+  let supabase
+  try {
+    supabase = createAdminClient()
+  } catch {
+    return 'Server configuration error: SUPABASE_SERVICE_ROLE_KEY is not set. Add it to your Vercel Environment Variables and redeploy.'
+  }
+
+  const { error } = await supabase.from('profiles').delete().eq('id', playerId)
+
+  if (error) return error.message
+
   revalidatePath('/players')
   revalidatePath('/admin/players')
+  return null
 }
 
 // ----------------------------------------------------------------
@@ -152,7 +183,13 @@ export async function createMatch(
 
   if (Object.keys(fieldErrors).length > 0) return { error: null, fieldErrors }
 
-  const supabase = createAdminClient()
+  let supabase
+  try {
+    supabase = createAdminClient()
+  } catch {
+    return { error: 'Server configuration error: SUPABASE_SERVICE_ROLE_KEY is not set. Add it to your Vercel Environment Variables and redeploy.' }
+  }
+
   const { data: match, error } = await supabase
     .from('matches')
     .insert({
@@ -189,7 +226,12 @@ export async function startMatch(
   tossDecision: 'bat' | 'bowl'
 ) {
   await requireAdmin()
-  const supabase = createAdminClient()
+  let supabase
+  try {
+    supabase = createAdminClient()
+  } catch {
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY is not set. Add it to Vercel Environment Variables.')
+  }
   const { error } = await supabase
     .from('matches')
     .update({ toss_winner: tossWinner, toss_decision: tossDecision, status: 'live' })
@@ -208,7 +250,12 @@ export async function startMatch(
 // ----------------------------------------------------------------
 export async function deleteMatch(matchId: string) {
   await requireAdmin()
-  const supabase = createAdminClient()
+  let supabase
+  try {
+    supabase = createAdminClient()
+  } catch {
+    return // silently fail if misconfigured - not worth crashing the admin dashboard
+  }
   await supabase.from('matches').delete().eq('id', matchId).eq('status', 'scheduled')
   revalidatePath('/admin')
   revalidatePath('/matches')

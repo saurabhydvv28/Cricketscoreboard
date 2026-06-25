@@ -6,7 +6,28 @@ import { deletePlayer } from '@/lib/actions/matches'
 
 export function DeletePlayerButton({ playerId, playerName }: { playerId: string; playerName: string }) {
   const [confirming, setConfirming] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
+
+  function handleDelete() {
+    setError(null)
+    startTransition(async () => {
+      const err = await deletePlayer(playerId)
+      if (err) {
+        setError(err)
+        setConfirming(false)
+      }
+    })
+  }
+
+  if (error) {
+    return (
+      <span className="text-xs text-boundary">
+        {error}{' '}
+        <button onClick={() => setError(null)} className="underline">Dismiss</button>
+      </span>
+    )
+  }
 
   if (!confirming) {
     return (
@@ -23,7 +44,7 @@ export function DeletePlayerButton({ playerId, playerName }: { playerId: string;
   return (
     <div className="flex items-center gap-1">
       <button
-        onClick={() => startTransition(() => deletePlayer(playerId))}
+        onClick={handleDelete}
         disabled={isPending}
         className="text-xs font-medium text-boundary hover:underline disabled:opacity-50"
       >

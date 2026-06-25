@@ -60,7 +60,10 @@ export async function setMatchPlayers(
     ...(updates.bowlerId !== undefined && { bowler_id: updates.bowlerId }),
   }
 
-  const supabase = createAdminClient()
+  let supabase
+  try { supabase = createAdminClient() } catch {
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY is not set. Add it to Vercel Environment Variables.')
+  }
   const { error } = await supabase
     .from('matches')
     .update({ live_data: nextLiveData })
@@ -110,7 +113,10 @@ export async function recordBall(matchId: string, input: BallInput) {
     target: match.live_data.target,
   })
 
-  const supabase = createAdminClient()
+  let supabase
+  try { supabase = createAdminClient() } catch {
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY is not set. Add it to Vercel Environment Variables.')
+  }
 
   const { error: insertError } = await supabase.from('ball_by_ball_logs').insert({
     match_id: matchId,
@@ -184,7 +190,10 @@ export async function undoLastBall(matchId: string) {
   await requireAdmin()
   const match = await getMatchOrThrow(matchId)
   const readClient = await createClient()
-  const supabase = createAdminClient()
+  let supabase
+  try { supabase = createAdminClient() } catch {
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY is not set. Add it to Vercel Environment Variables.')
+  }
 
   const { data: lastBall } = await readClient
     .from('ball_by_ball_logs')
