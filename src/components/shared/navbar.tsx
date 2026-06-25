@@ -1,7 +1,7 @@
 import Link from "next/link"
-
-import { createClient } from "@/lib/supabase/server"
-import { UserMenu } from "@/components/shared/user-menu"
+import { LayoutDashboard, LogOut } from "lucide-react"
+import { verifyAdminSession } from "@/lib/admin-auth"
+import { adminLogout } from "@/lib/actions/auth"
 
 const navLinks = [
   { href: "/matches", label: "Matches" },
@@ -10,21 +10,7 @@ const navLinks = [
 ]
 
 export async function Navbar() {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  let profile: { full_name: string; player_id: string; is_admin: boolean } | null = null
-
-  if (user) {
-    const { data } = await supabase
-      .from("profiles")
-      .select("full_name, player_id, is_admin")
-      .eq("id", user.id)
-      .single()
-    profile = data
-  }
+  const isAdmin = await verifyAdminSession()
 
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
@@ -51,21 +37,32 @@ export async function Navbar() {
         </nav>
 
         <div className="flex items-center gap-3">
-          {profile ? (
-            <UserMenu
-              fullName={profile.full_name}
-              playerId={profile.player_id}
-              isAdmin={profile.is_admin}
-            />
-          ) : (
+          {isAdmin ? (
             <>
               <Link
-                href="/login"
-                className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+                href="/admin"
+                className="flex items-center gap-1.5 text-sm font-medium text-amber hover:text-amber/80"
               >
-                Sign in
+                <LayoutDashboard className="h-4 w-4" />
+                <span className="hidden sm:inline">Admin</span>
               </Link>
+              <form action={adminLogout}>
+                <button
+                  type="submit"
+                  className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-boundary transition-colors"
+                >
+                  <LogOut className="h-4 w-4" />
+                  <span className="hidden sm:inline">Sign out</span>
+                </button>
+              </form>
             </>
+          ) : (
+            <Link
+              href="/admin/login"
+              className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Admin
+            </Link>
           )}
         </div>
       </div>

@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { TossForm } from '@/components/admin/toss-form'
 import { DeleteMatchButton } from '@/components/admin/delete-match-button'
+import { verifyAdminSession } from '@/lib/admin-auth'
 import { createClient } from '@/lib/supabase/server'
 
 export default async function MatchDetailPage({
@@ -16,36 +17,13 @@ export default async function MatchDetailPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
+  const isAdmin = await verifyAdminSession()
+  if (!isAdmin) redirect('/admin/login')
+
   const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { data: match } = await supabase.from('matches').select('*').eq('id', id).single()
+  if (!match) notFound()
 
-  if (!user) {
-    redirect(`/login?redirectTo=/admin/matches/${id}`)
-  }
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('is_admin')
-    .eq('id', user.id)
-    .single()
-
-  if (!profile?.is_admin) {
-    redirect('/admin')
-  }
-
-  const { data: match } = await supabase
-    .from('matches')
-    .select('*')
-    .eq('id', id)
-    .single()
-
-  if (!match) {
-    notFound()
-  }
-
-  // Fetch roster player names — team_a_roster/team_b_roster are just uuid[]
   const allPlayerIds = [...match.team_a_roster, ...match.team_b_roster]
   const { data: players } = await supabase
     .from('profiles')
@@ -62,12 +40,8 @@ export default async function MatchDetailPage({
       <Navbar />
       <main className="container flex-1 py-12">
         <div className="mx-auto max-w-3xl">
-          <Link
-            href="/admin"
-            className="mb-6 inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            Back to dashboard
+          <Link href="/admin" className="mb-6 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+            <ArrowLeft className="h-3.5 w-3.5" /> Back to dashboard
           </Link>
 
           <div className="flex items-start justify-between gap-4">
@@ -75,45 +49,31 @@ export default async function MatchDetailPage({
               <h1 className="font-sans text-2xl font-bold text-foreground">
                 {match.team_a_name} vs {match.team_b_name}
               </h1>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {match.total_overs} overs per innings
-              </p>
+              <p className="mt-1 text-sm text-muted-foreground">{match.total_overs} overs per innings</p>
             </div>
-            <Badge variant={statusVariant} className="capitalize">
-              {match.status}
-            </Badge>
+            <Badge variant={statusVariant} className="capitalize">{match.status}</Badge>
           </div>
 
           <div className="mt-8 grid gap-6 sm:grid-cols-2">
-            {([
+            {[
               { name: match.team_a_name, roster: match.team_a_roster },
               { name: match.team_b_name, roster: match.team_b_roster },
-            ] as const).map((team) => (
+            ].map((team) => (
               <Card key={team.name}>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-base">
-                    <Users className="h-4 w-4 text-amber" />
-                    {team.name}
+                    <Users className="h-4 w-4 text-amber" /> {team.name}
                   </CardTitle>
-                  <CardDescription>
-                    {team.roster.length} player{team.roster.length === 1 ? '' : 's'}
-                  </CardDescription>
+                  <CardDescription>{team.roster.length} players</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <ul className="space-y-1.5">
-                    {team.roster.map((playerId) => {
-                      const p = playerMap.get(playerId)
+                    {team.roster.map((pid) => {
+                      const p = playerMap.get(pid)
                       return (
-                        <li
-                          key={playerId}
-                          className="flex items-center justify-between text-sm"
-                        >
-                          <span className="text-foreground">
-                            {p?.full_name ?? 'Unknown player'}
-                          </span>
-                          <span className="font-mono text-xs text-muted-foreground">
-                            {p?.player_id ?? '—'}
-                          </span>
+                        <li key={pid} className="flex items-center justify-between text-sm">
+                          <span className="text-foreground">{p?.full_name ?? 'Unknown'}</span>
+                          <span className="font-mono text-xs text-muted-foreground">{p?.player_id ?? '—'}</span>
                         </li>
                       )
                     })}
@@ -125,45 +85,29 @@ export default async function MatchDetailPage({
 
           <div className="mt-6">
             {match.status === 'scheduled' && (
-              <TossForm
-                matchId={match.id}
-                teamAName={match.team_a_name}
-                teamBName={match.team_b_name}
-              />
+              <TossForm matchId={match.id} teamAName={match.team_a_name} teamBName={match.team_b_name} />
             )}
-
             {match.status === 'live' && (
               <Card>
                 <CardHeader>
                   <CardTitle>Match in progress</CardTitle>
-                  <CardDescription>
-                    Continue ball-by-ball scoring from the live console.
-                  </CardDescription>
+                  <CardDescription>Continue ball-by-ball scoring from the live console.</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <Button asChild>
-                    <Link href={`/admin/matches/${match.id}/score`}>
-                      Open scoring console
-                    </Link>
+                    <Link href={`/admin/matches/${match.id}/score`}>Open scoring console</Link>
                   </Button>
                 </CardContent>
               </Card>
             )}
-
             {match.status === 'completed' && (
               <Card>
                 <CardHeader>
                   <CardTitle>Match completed</CardTitle>
-                  <CardDescription>
-                    This match has finished. View it on the public
-                    scoreboard for the final result.
-                  </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <Button asChild variant="outline">
-                    <Link href={`/matches/${match.id}`}>
-                      View final scoreboard
-                    </Link>
+                    <Link href={`/matches/${match.id}`}>View final scoreboard</Link>
                   </Button>
                 </CardContent>
               </Card>

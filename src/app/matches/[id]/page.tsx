@@ -41,25 +41,34 @@ export default async function PublicMatchPage({ params }: Props) {
 
   if (!match) notFound()
 
-  // Fetch recent balls for the current innings (for real-time commentary)
-  // and separately the full innings 1 log (for the batting/bowling scorecard)
-  const [{ data: currentInningsBalls }, { data: innings1BallsRaw }] = await Promise.all([
-    supabase
-      .from('ball_by_ball_logs')
-      .select('*')
-      .eq('match_id', id)
-      .eq('innings', match.current_innings)
-      .order('id', { ascending: false })
-      .limit(12),
-    match.current_innings === 2
-      ? supabase
-          .from('ball_by_ball_logs')
-          .select('*')
-          .eq('match_id', id)
-          .eq('innings', 1)
-          .order('id', { ascending: true })
-      : Promise.resolve({ data: [] }),
-  ])
+  // Three ball fetches in parallel:
+  // 1. Full current innings balls (for batting/bowling scorecard stats)
+  // 2. Recent 12 balls descending (to seed the Realtime commentary hook)
+  // 3. Full innings 1 balls (for innings 1 scorecard when we're in innings 2)
+  const [{ data: allCurrentBalls }, { data: recentCurrentBalls }, { data: innings1BallsRaw }] =
+    await Promise.all([
+      supabase
+        .from('ball_by_ball_logs')
+        .select('*')
+        .eq('match_id', id)
+        .eq('innings', match.current_innings)
+        .order('id', { ascending: true }),
+      supabase
+        .from('ball_by_ball_logs')
+        .select('*')
+        .eq('match_id', id)
+        .eq('innings', match.current_innings)
+        .order('id', { ascending: false })
+        .limit(12),
+      match.current_innings === 2
+        ? supabase
+            .from('ball_by_ball_logs')
+            .select('*')
+            .eq('match_id', id)
+            .eq('innings', 1)
+            .order('id', { ascending: true })
+        : Promise.resolve({ data: [] }),
+    ])
 
   // Resolve all player IDs from both rosters to names in one query
   const allPlayerIds = [...match.team_a_roster, ...match.team_b_roster]
@@ -120,7 +129,8 @@ export default async function PublicMatchPage({ params }: Props) {
           ) : (
             <LiveScoreboard
               initialMatch={match}
-              initialBalls={currentInningsBalls ?? []}
+              initialBalls={recentCurrentBalls ?? []}
+              allCurrentBalls={allCurrentBalls ?? []}
               allPlayers={players ?? []}
               innings1Balls={innings1BallsRaw ?? []}
             />

@@ -1,9 +1,10 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { redirect } from 'next/navigation'
 
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { requireAdmin } from '@/lib/actions/auth'
 import {
   battingRoster,
   computeNextLiveData,
@@ -17,28 +18,8 @@ import type { Match } from '@/types/database'
 // real enforcement layer (is_admin() on matches/ball_by_ball_logs
 // write policies) — this just gives a friendly error/redirect first.
 // ----------------------------------------------------------------
-async function requireAdmin() {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  if (!user) {
-    redirect('/login?redirectTo=/admin')
-  }
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('is_admin')
-    .eq('id', user.id)
-    .single()
-
-  if (!profile?.is_admin) {
-    throw new Error('Admin access required.')
-  }
-
-  return { supabase, user }
-}
+// requireAdmin is now imported from auth actions
+// (PIN-based, not Supabase Auth)
 
 async function getMatchOrThrow(matchId: string): Promise<Match> {
   const supabase = await createClient()
@@ -79,7 +60,7 @@ export async function setMatchPlayers(
     ...(updates.bowlerId !== undefined && { bowler_id: updates.bowlerId }),
   }
 
-  const supabase = await createClient()
+  const supabase = createAdminClient()
   const { error } = await supabase
     .from('matches')
     .update({ live_data: nextLiveData })
@@ -129,7 +110,7 @@ export async function recordBall(matchId: string, input: BallInput) {
     target: match.live_data.target,
   })
 
-  const supabase = await createClient()
+  const supabase = createAdminClient()
 
   const { error: insertError } = await supabase.from('ball_by_ball_logs').insert({
     match_id: matchId,
@@ -202,9 +183,10 @@ export async function recordBall(matchId: string, input: BallInput) {
 export async function undoLastBall(matchId: string) {
   await requireAdmin()
   const match = await getMatchOrThrow(matchId)
-  const supabase = await createClient()
+  const readClient = await createClient()
+  const supabase = createAdminClient()
 
-  const { data: lastBall } = await supabase
+  const { data: lastBall } = await readClient
     .from('ball_by_ball_logs')
     .select('id')
     .eq('match_id', matchId)
@@ -226,7 +208,7 @@ export async function undoLastBall(matchId: string) {
     throw new Error(deleteError.message)
   }
 
-  const { data: remainingBalls } = await supabase
+  const { data: remainingBalls } = await readClient
     .from('ball_by_ball_logs')
     .select('*')
     .eq('match_id', matchId)

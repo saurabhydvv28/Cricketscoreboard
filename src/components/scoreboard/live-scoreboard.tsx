@@ -12,7 +12,8 @@ import { cn } from '@/lib/utils'
 
 interface LiveScoreboardProps {
   initialMatch: Match
-  initialBalls: BallByBallLog[]
+  initialBalls: BallByBallLog[]    // recent 12, descending — seeds Realtime hook
+  allCurrentBalls: BallByBallLog[] // full current innings, ascending — for scorecards
   allPlayers: Pick<Profile, 'id' | 'full_name'>[]
   innings1Balls: BallByBallLog[]
 }
@@ -22,9 +23,27 @@ function shortName(name: string): string {
   return parts.length === 1 ? name : `${parts[0][0]}. ${parts.slice(1).join(' ')}`
 }
 
+// Computes a batsman's stats from the ball log for the current innings
+function batsmanStats(
+  playerId: string,
+  balls: BallByBallLog[]
+): { runs: number; balls: number; fours: number; sixes: number } {
+  let runs = 0, ballsFaced = 0, fours = 0, sixes = 0
+  for (const b of balls) {
+    if (b.batsman_id !== playerId) continue
+    const runsOffBat = b.extra_type === 'bye' || b.extra_type === 'leg_bye' ? 0 : b.runs_scored
+    runs += runsOffBat
+    if (b.is_legal_delivery) ballsFaced++
+    if (b.runs_scored === 4) fours++
+    if (b.runs_scored === 6) sixes++
+  }
+  return { runs, balls: ballsFaced, fours, sixes }
+}
+
 export function LiveScoreboard({
   initialMatch,
   initialBalls,
+  allCurrentBalls,
   allPlayers,
   innings1Balls,
 }: LiveScoreboardProps) {
@@ -35,7 +54,12 @@ export function LiveScoreboard({
   const isLive = match.status === 'live'
   const isCompleted = match.status === 'completed'
 
-  // Determine batting team name for current innings
+  // Use allCurrentBalls (full history) for stat computation,
+  // supplemented by any new balls that arrived via Realtime since SSR.
+  const latestIds = new Set(allCurrentBalls.map((b) => b.id))
+  const newBalls = recentBalls.filter((b) => !latestIds.has(b.id))
+  const fullCurrentBalls = [...allCurrentBalls, ...newBalls.reverse()]
+
   const teamABatsInnings1 =
     (match.toss_winner === 'team_a' && match.toss_decision === 'bat') ||
     (match.toss_winner === 'team_b' && match.toss_decision === 'bowl')
@@ -45,26 +69,36 @@ export function LiveScoreboard({
       ? teamABatsInnings1 ? match.team_a_name : match.team_b_name
       : teamABatsInnings1 ? match.team_b_name : match.team_a_name
 
-  const striker = live.striker_id ? playerMap.get(live.striker_id) : null
-  const nonStriker = live.non_striker_id ? playerMap.get(live.non_striker_id) : null
-  const bowler = live.bowler_id ? playerMap.get(live.bowler_id) : null
+  // Compute live batsman stats from the full ball history
+  const strikerLiveStats = live.striker_id ? batsmanStats(live.striker_id, fullCurrentBalls) : null
+  const nonStrikerLiveStats = live.non_striker_id ? batsmanStats(live.non_striker_id, fullCurrentBalls) : null
+  const bowlerLiveStats = live.bowler_id
+    ? (() => {
+        let runs = 0, balls = 0, wickets = 0
+        for (const b of fullCurrentBalls) {
+          if (b.bowler_id !== live.bowler_id) continue
+          runs += b.runs_scored + b.extra_runs
+          if (b.is_legal_delivery) balls++
+          if (b.is_wicket && b.wicket_type !== 'run_out') wickets++
+        }
+        return { runs, balls, wickets }
+      })()
+    : null
+
+  const strikerName = live.striker_id ? playerMap.get(live.striker_id) : null
+  const nonStrikerName = live.non_striker_id ? playerMap.get(live.non_striker_id) : null
+  const bowlerName = live.bowler_id ? playerMap.get(live.bowler_id) : null
 
   return (
     <div className="space-y-5">
-      {/* Connection status indicator */}
+      {/* Connection status */}
       <div className="flex items-center justify-end gap-1.5">
-        <span className={cn(
-          'flex items-center gap-1 text-xs',
-          isConnected ? 'text-pitch-green' : 'text-muted-foreground'
-        )}>
-          {isConnected
-            ? <><Wifi className="h-3 w-3" /> Live</>
-            : <><WifiOff className="h-3 w-3" /> Connecting…</>
-          }
+        <span className={cn('flex items-center gap-1 text-xs', isConnected ? 'text-pitch-green' : 'text-muted-foreground')}>
+          {isConnected ? <><Wifi className="h-3 w-3" /> Live</> : <><WifiOff className="h-3 w-3" /> Connecting…</>}
         </span>
       </div>
 
-      {/* Current innings scoreboard ticker */}
+      {/* Current innings ScoreboardTicker */}
       {(isLive || isCompleted) && (
         <ScoreboardTicker
           teamName={battingTeamName}
@@ -82,7 +116,7 @@ export function LiveScoreboard({
         />
       )}
 
-      {/* Innings 2 target / required run rate */}
+      {/* Innings 2 target/RRR */}
       {match.current_innings === 2 && live.target !== null && isLive && (
         <div className="rounded-md border border-border bg-surface px-4 py-3 text-sm">
           <div className="flex items-center justify-between">
@@ -93,7 +127,7 @@ export function LiveScoreboard({
               </span>{' '}
               runs from{' '}
               <span className="font-mono font-bold text-amber">
-                {(match.total_overs * 6 - parseInt(live.overs.split('.')[0]) * 6 - parseInt(live.overs.split('.')[1]))} balls
+                {Math.max(0, match.total_overs * 6 - (parseInt(live.overs.split('.')[0]) * 6 + parseInt(live.overs.split('.')[1])))} balls
               </span>
             </span>
             {live.required_run_rate !== null && (
@@ -105,7 +139,107 @@ export function LiveScoreboard({
         </div>
       )}
 
-      {/* Innings 1 summary (always shown once it's done) */}
+      {/* ── AT THE CREASE — with runs (balls) stats ── */}
+      {isLive && (strikerName || nonStrikerName || bowlerName) && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground">At the crease</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="space-y-3">
+              {/* Batting pair */}
+              {(strikerName || nonStrikerName) && (
+                <div className="space-y-2">
+                  {strikerName && (
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber text-[10px] font-bold text-primary-foreground">
+                          *
+                        </span>
+                        <span className="font-semibold text-amber">{shortName(strikerName.full_name)}</span>
+                        <span className="text-xs text-muted-foreground">striker</span>
+                      </div>
+                      {strikerLiveStats && (
+                        <div className="flex items-center gap-3 text-sm">
+                          <span className="scoreboard-numerals font-mono font-bold text-amber">
+                            {strikerLiveStats.runs}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            ({strikerLiveStats.balls} balls)
+                          </span>
+                          {strikerLiveStats.fours > 0 && (
+                            <span className="text-xs text-muted-foreground">{strikerLiveStats.fours}×4</span>
+                          )}
+                          {strikerLiveStats.sixes > 0 && (
+                            <span className="text-xs text-muted-foreground">{strikerLiveStats.sixes}×6</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {nonStrikerName && (
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-5 w-5 items-center justify-center rounded-full border border-border text-[10px] text-muted-foreground">
+                          —
+                        </span>
+                        <span className="font-medium text-foreground">{shortName(nonStrikerName.full_name)}</span>
+                        <span className="text-xs text-muted-foreground">non-striker</span>
+                      </div>
+                      {nonStrikerLiveStats && (
+                        <div className="flex items-center gap-3 text-sm">
+                          <span className="scoreboard-numerals font-mono font-bold text-foreground">
+                            {nonStrikerLiveStats.runs}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            ({nonStrikerLiveStats.balls} balls)
+                          </span>
+                          {nonStrikerLiveStats.fours > 0 && (
+                            <span className="text-xs text-muted-foreground">{nonStrikerLiveStats.fours}×4</span>
+                          )}
+                          {nonStrikerLiveStats.sixes > 0 && (
+                            <span className="text-xs text-muted-foreground">{nonStrikerLiveStats.sixes}×6</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Separator */}
+              {(strikerName || nonStrikerName) && bowlerName && (
+                <div className="border-t border-border/40" />
+              )}
+
+              {/* Bowler */}
+              {bowlerName && (
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full border border-border text-[10px] text-muted-foreground">
+                      B
+                    </span>
+                    <span className="font-medium text-foreground">{shortName(bowlerName.full_name)}</span>
+                    <span className="text-xs text-muted-foreground">bowling</span>
+                  </div>
+                  {bowlerLiveStats && (
+                    <div className="flex items-center gap-3 text-sm">
+                      <span className="font-mono text-foreground">
+                        {bowlerLiveStats.runs}/{bowlerLiveStats.wickets}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        ({Math.floor(bowlerLiveStats.balls / 6)}.{bowlerLiveStats.balls % 6} ov)
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Innings 1 summary */}
       {(match.current_innings === 2 || isCompleted) && match.innings1_score !== null && (
         <Card>
           <CardHeader className="pb-3">
@@ -132,40 +266,9 @@ export function LiveScoreboard({
       )}
 
       {/* Match result */}
-      {isCompleted && (
-        <MatchResult match={match} teamABatsInnings1={teamABatsInnings1} />
-      )}
+      {isCompleted && <MatchResult match={match} teamABatsInnings1={teamABatsInnings1} />}
 
-      {/* At the crease */}
-      {isLive && (striker || nonStriker || bowler) && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm text-muted-foreground">At the crease</CardTitle>
-          </CardHeader>
-          <CardContent className="grid grid-cols-2 gap-4 pt-0 text-sm sm:grid-cols-3">
-            {striker && (
-              <div>
-                <p className="text-xs text-muted-foreground">Striker</p>
-                <p className="font-medium text-amber">{shortName(striker.full_name)} *</p>
-              </div>
-            )}
-            {nonStriker && (
-              <div>
-                <p className="text-xs text-muted-foreground">Non-striker</p>
-                <p className="font-medium text-foreground">{shortName(nonStriker.full_name)}</p>
-              </div>
-            )}
-            {bowler && (
-              <div>
-                <p className="text-xs text-muted-foreground">Bowler</p>
-                <p className="font-medium text-foreground">{shortName(bowler.full_name)}</p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Ball-by-ball commentary */}
+      {/* Ball commentary */}
       {isLive && (
         <Card>
           <CardHeader className="pb-3">
@@ -177,8 +280,8 @@ export function LiveScoreboard({
         </Card>
       )}
 
-      {/* Full innings 2 scorecard when match is complete */}
-      {isCompleted && recentBalls.length > 0 && (
+      {/* Completed innings 2 scorecard */}
+      {isCompleted && fullCurrentBalls.length > 0 && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-sm">
@@ -191,7 +294,7 @@ export function LiveScoreboard({
               score={live.score}
               wickets={live.wickets}
               overs={live.overs}
-              balls={recentBalls}
+              balls={fullCurrentBalls}
               players={playerMap}
             />
           </CardContent>
@@ -201,13 +304,7 @@ export function LiveScoreboard({
   )
 }
 
-function MatchResult({
-  match,
-  teamABatsInnings1,
-}: {
-  match: Match
-  teamABatsInnings1: boolean
-}) {
+function MatchResult({ match, teamABatsInnings1 }: { match: Match; teamABatsInnings1: boolean }) {
   const { innings1_score, live_data } = match
   const innings2Score = live_data.score
   const innings2Wickets = live_data.wickets

@@ -166,7 +166,7 @@ export type Database = {
     Tables: {
       profiles: {
         Row: Profile
-        Insert: Omit<Profile, 'created_at'>
+        Insert: Omit<Profile, 'id' | 'created_at'> & { id?: string }
         Update: Partial<Omit<Profile, 'id' | 'created_at'>>
         Relationships: []
       }

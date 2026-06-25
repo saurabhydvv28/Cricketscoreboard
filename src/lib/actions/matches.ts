@@ -3,19 +3,11 @@
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 
+import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
+import { requireAdmin } from '@/lib/actions/auth'
+import { generate_player_id } from '@/lib/player-id'
 import type { LiveMatchData } from '@/types/database'
-
-export interface CreateMatchFormState {
-  error: string | null
-  fieldErrors?: {
-    teamAName?: string
-    teamBName?: string
-    totalOvers?: string
-    teamARoster?: string
-    teamBRoster?: string
-  }
-}
 
 const initialLiveData: LiveMatchData = {
   striker_id: null,
@@ -31,38 +23,19 @@ const initialLiveData: LiveMatchData = {
   current_over_balls: [],
 }
 
-// ----------------------------------------------------------------
-// Verify the current user is an admin. Used at the top of every
-// admin server action — RLS also enforces this at the DB layer via
-// is_admin(), but checking here lets us return a friendly form error
-// instead of a raw Postgres permission-denied message.
-// ----------------------------------------------------------------
-async function requireAdmin() {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  if (!user) {
-    redirect('/login?redirectTo=/admin')
+export interface CreateMatchFormState {
+  error: string | null
+  fieldErrors?: {
+    teamAName?: string
+    teamBName?: string
+    totalOvers?: string
+    teamARoster?: string
+    teamBRoster?: string
   }
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('is_admin')
-    .eq('id', user.id)
-    .single()
-
-  if (!profile?.is_admin) {
-    throw new Error('Admin access required.')
-  }
-
-  return { supabase, user }
 }
 
 // ----------------------------------------------------------------
-// Search players by full_name or player_id for roster assembly.
-// Returns a small result set for the admin's autocomplete UI.
+// Search players — public read, uses anon client
 // ----------------------------------------------------------------
 export async function searchPlayers(query: string) {
   const supabase = await createClient()
@@ -72,7 +45,7 @@ export async function searchPlayers(query: string) {
       .from('profiles')
       .select('id, full_name, player_id, avatar_url')
       .order('full_name', { ascending: true })
-      .limit(20)
+      .limit(30)
     return data ?? []
   }
 
@@ -82,14 +55,74 @@ export async function searchPlayers(query: string) {
     .select('id, full_name, player_id, avatar_url')
     .or(`full_name.ilike.%${term}%,player_id.ilike.%${term}%`)
     .order('full_name', { ascending: true })
-    .limit(20)
+    .limit(30)
 
   return data ?? []
 }
 
 // ----------------------------------------------------------------
-// Create a new match with two rosters. Validates team names, overs,
-// minimum roster size, and that no player appears on both teams.
+// Create a player profile (admin only, no auth required from player)
+// ----------------------------------------------------------------
+export interface CreatePlayerState {
+  error: string | null
+  success?: string | null
+}
+
+export async function createPlayer(
+  _prevState: CreatePlayerState,
+  formData: FormData
+): Promise<CreatePlayerState> {
+  await requireAdmin()
+
+  const fullName = (formData.get('fullName') as string)?.trim()
+  if (!fullName || fullName.length < 2) {
+    return { error: 'Enter the player\'s full name.' }
+  }
+
+  const supabase = createAdminClient()
+  const playerId = generate_player_id(fullName)
+
+  // Check for duplicate name
+  const { data: existing } = await supabase
+    .from('profiles')
+    .select('id')
+    .ilike('full_name', fullName)
+    .limit(1)
+    .single()
+
+  if (existing) {
+    return { error: `A player named "${fullName}" already exists.` }
+  }
+
+  const { error } = await supabase.from('profiles').insert({
+    full_name: fullName,
+    player_id: playerId,
+    is_admin: false,
+    avatar_url: null,
+  })
+
+  if (error) {
+    return { error: error.message }
+  }
+
+  revalidatePath('/players')
+  revalidatePath('/admin/players')
+  return { error: null, success: `${fullName} added with Player ID: ${playerId}` }
+}
+
+// ----------------------------------------------------------------
+// Delete a player profile (admin only)
+// ----------------------------------------------------------------
+export async function deletePlayer(playerId: string) {
+  await requireAdmin()
+  const supabase = createAdminClient()
+  await supabase.from('profiles').delete().eq('id', playerId)
+  revalidatePath('/players')
+  revalidatePath('/admin/players')
+}
+
+// ----------------------------------------------------------------
+// Create a match
 // ----------------------------------------------------------------
 export async function createMatch(
   _prevState: CreateMatchFormState,
@@ -106,35 +139,20 @@ export async function createMatch(
 
   const fieldErrors: CreateMatchFormState['fieldErrors'] = {}
 
-  if (!teamAName || teamAName.length < 2) {
-    fieldErrors.teamAName = 'Enter a team name.'
-  }
-  if (!teamBName || teamBName.length < 2) {
-    fieldErrors.teamBName = 'Enter a team name.'
-  }
-  if (teamAName && teamBName && teamAName.toLowerCase() === teamBName.toLowerCase()) {
+  if (!teamAName || teamAName.length < 2) fieldErrors.teamAName = 'Enter a team name.'
+  if (!teamBName || teamBName.length < 2) fieldErrors.teamBName = 'Enter a team name.'
+  if (teamAName && teamBName && teamAName.toLowerCase() === teamBName.toLowerCase())
     fieldErrors.teamBName = 'Team names must be different.'
-  }
-  if (!totalOvers || totalOvers < 1 || totalOvers > 50) {
+  if (!totalOvers || totalOvers < 1 || totalOvers > 50)
     fieldErrors.totalOvers = 'Enter overs between 1 and 50.'
-  }
-  if (teamARoster.length < 2) {
-    fieldErrors.teamARoster = 'Add at least 2 players.'
-  }
-  if (teamBRoster.length < 2) {
-    fieldErrors.teamBRoster = 'Add at least 2 players.'
-  }
-  const overlap = teamARoster.filter((id) => teamBRoster.includes(id))
-  if (overlap.length > 0) {
+  if (teamARoster.length < 2) fieldErrors.teamARoster = 'Add at least 2 players.'
+  if (teamBRoster.length < 2) fieldErrors.teamBRoster = 'Add at least 2 players.'
+  if (teamARoster.filter((id) => teamBRoster.includes(id)).length > 0)
     fieldErrors.teamBRoster = 'A player cannot be on both teams.'
-  }
 
-  if (Object.keys(fieldErrors).length > 0) {
-    return { error: null, fieldErrors }
-  }
+  if (Object.keys(fieldErrors).length > 0) return { error: null, fieldErrors }
 
-  const supabase = await createClient()
-
+  const supabase = createAdminClient()
   const { data: match, error } = await supabase
     .from('matches')
     .insert({
@@ -155,9 +173,7 @@ export async function createMatch(
     .select('id')
     .single()
 
-  if (error || !match) {
-    return { error: error?.message ?? 'Failed to create match.' }
-  }
+  if (error || !match) return { error: error?.message ?? 'Failed to create match.' }
 
   revalidatePath('/admin')
   revalidatePath('/matches')
@@ -165,9 +181,7 @@ export async function createMatch(
 }
 
 // ----------------------------------------------------------------
-// Set the toss result and move a scheduled match to live. This is a
-// separate action from createMatch so the admin can create the match
-// ahead of time and start it later, right before play begins.
+// Start match (record toss + go live)
 // ----------------------------------------------------------------
 export async function startMatch(
   matchId: string,
@@ -175,20 +189,13 @@ export async function startMatch(
   tossDecision: 'bat' | 'bowl'
 ) {
   await requireAdmin()
-  const supabase = await createClient()
-
+  const supabase = createAdminClient()
   const { error } = await supabase
     .from('matches')
-    .update({
-      toss_winner: tossWinner,
-      toss_decision: tossDecision,
-      status: 'live',
-    })
+    .update({ toss_winner: tossWinner, toss_decision: tossDecision, status: 'live' })
     .eq('id', matchId)
 
-  if (error) {
-    throw new Error(error.message)
-  }
+  if (error) throw new Error(error.message)
 
   revalidatePath('/admin')
   revalidatePath('/matches')
@@ -197,24 +204,12 @@ export async function startMatch(
 }
 
 // ----------------------------------------------------------------
-// Delete a scheduled match (admin changed their mind before it went
-// live). Matches that are live or completed should not be deletable
-// from the UI to protect historical data and in-progress games.
+// Delete a scheduled match
 // ----------------------------------------------------------------
 export async function deleteMatch(matchId: string) {
   await requireAdmin()
-  const supabase = await createClient()
-
-  const { error } = await supabase
-    .from('matches')
-    .delete()
-    .eq('id', matchId)
-    .eq('status', 'scheduled')
-
-  if (error) {
-    throw new Error(error.message)
-  }
-
+  const supabase = createAdminClient()
+  await supabase.from('matches').delete().eq('id', matchId).eq('status', 'scheduled')
   revalidatePath('/admin')
   revalidatePath('/matches')
 }

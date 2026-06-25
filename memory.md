@@ -110,3 +110,21 @@ A full-stack Local Cricket Match Scoreboard web application built with Next.js 1
 - Map iteration with for...of requires ES2015+ target. The tsconfig here compiles to ES5 by default, so Map.entries() and Map.values() must use Array.from() explicitly rather than destructured for...of. Caught at build time as a TS error.
 - The matches listing page shows live scores directly from live_data JSONB without extra queries — a key design payoff from the Step 1 decision to denormalize volatile state into live_data rather than requiring ball-log aggregation for every scoreboard render.
 - 002_enable_realtime.sql must be run separately from 001_initial_schema.sql because the supabase_realtime publication already exists in hosted Supabase but the ADD TABLE statements need the tables to exist first (chicken-and-egg if run together in a single migration).
+
+## Step 7 Completed Features
+- [x] Step 7: Leaderboard dashboard + final polish — project COMPLETE
+  - `src/components/leaderboards/shared.tsx` — shared sub-components: `RankBadge` (gold/silver/bronze for 1-3, plain number for 4-5), `PlayerAvatar` (Radix Avatar with initials fallback), `StatCell` (mono number + label pair), `formatBowlingOvers` (converts full_overs + remaining_balls from the bowling view to "overs.balls" display).
+  - `src/components/leaderboards/orange-cap-table.tsx` — Top 5 run scorers: rank badge, avatar, name/player_id/matches, then runs (highlighted amber)/balls/4s/6s/SR stat cells.
+  - `src/components/leaderboards/purple-cap-table.tsx` — Top 5 wicket takers: rank badge, avatar, name, then wickets (highlighted)/overs/runs/eco.
+  - `src/components/leaderboards/sr-eco-tables.tsx` — `StrikeRateTable` (min 20 balls faced) and `EconomyRateTable` (min 4 overs bowled) in one file.
+  - `src/app/leaderboards/page.tsx` — server component fetching all four views in `Promise.all()` (parallel, not sequential), renders Radix Tabs with 4 tabs. Empty-state message when no data yet. Has `generateMetadata()` for SEO.
+  - `src/app/players/page.tsx` — replaced placeholder with real player directory querying `profiles` table, sorted alphabetically. Grid of name + player_id cards with avatar initials. Links to /signup for first-time visitors.
+  - `src/app/page.tsx` — made async, now fetches a real live match for the hero ticker. Falls back gracefully to the static demo if no live matches exist. Added Leaderboards CTA button alongside "View live matches". Feature cards updated.
+  - Build: 17 routes, 0 errors. Leaderboards page 2.85kB. All routes dynamic (server-rendered on demand), which is correct — leaderboard data changes with every ball.
+
+## Final Project Status
+All 7 steps are complete. The app is fully production-deployable:
+  1. DB migrations (001 + 002) applied in Supabase
+  2. Three env vars set in Vercel (SUPABASE_URL, SUPABASE_ANON_KEY, SITE_URL)
+  3. Supabase email confirmation redirect URL allowlisted
+  4. At least one user promoted to admin via SQL

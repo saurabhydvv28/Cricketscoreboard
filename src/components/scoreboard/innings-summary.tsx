@@ -9,6 +9,8 @@ interface BatsmanLine {
   fours: number
   sixes: number
   isOut: boolean
+  isAtCrease?: boolean  // currently batting (not out)
+  isStriker?: boolean
   dismissalNote: string
 }
 
@@ -27,6 +29,8 @@ interface InningsSummaryProps {
   overs: string
   balls: BallByBallLog[]
   players: Map<string, Pick<Profile, 'id' | 'full_name'>>
+  strikerId?: string | null
+  nonStrikerId?: string | null
   className?: string
 }
 
@@ -47,6 +51,8 @@ export function InningsSummary({
   overs,
   balls,
   players,
+  strikerId,
+  nonStrikerId,
   className,
 }: InningsSummaryProps) {
   // ---- Build batting lines ----
@@ -65,15 +71,9 @@ export function InningsSummary({
         dismissalNote: 'not out',
       })
     }
-
     const line = batsmanMap.get(ball.batsman_id)!
-    // Runs scored by this batsman off the bat (exclude bye/leg-bye
-    // extras which go to the team but aren't credited to the batsman)
     const runsOffBat =
-      ball.extra_type === 'bye' || ball.extra_type === 'leg_bye'
-        ? 0
-        : ball.runs_scored
-
+      ball.extra_type === 'bye' || ball.extra_type === 'leg_bye' ? 0 : ball.runs_scored
     line.runs += runsOffBat
     if (ball.is_legal_delivery) line.balls++
     if (ball.runs_scored === 4) line.fours++
@@ -103,6 +103,15 @@ export function InningsSummary({
     }
   }
 
+  // Mark current batsmen at crease
+  for (const entry of Array.from(batsmanMap.entries())) {
+    const [id, line] = entry
+    if (!line.isOut) {
+      if (id === strikerId) { line.isAtCrease = true; line.isStriker = true }
+      else if (id === nonStrikerId) { line.isAtCrease = true }
+    }
+  }
+
   // ---- Build bowling lines ----
   const bowlerMap = new Map<string, BowlerLine>()
 
@@ -111,37 +120,29 @@ export function InningsSummary({
       bowlerMap.set(ball.bowler_id, {
         id: ball.bowler_id,
         name: shortName(players.get(ball.bowler_id)?.full_name ?? '???'),
-        overs: '0.0',
-        runs: 0,
-        wickets: 0,
+        overs: '0.0', runs: 0, wickets: 0,
       })
     }
     const line = bowlerMap.get(ball.bowler_id)!
     line.runs += ball.runs_scored + ball.extra_runs
-    if (ball.is_wicket && ball.wicket_type !== 'run_out') {
-      line.wickets++
-    }
+    if (ball.is_wicket && ball.wicket_type !== 'run_out') line.wickets++
   }
 
-  // Compute overs per bowler
   for (const entry of Array.from(bowlerMap.entries())) {
-    const bowlerId = entry[0]
-    const line = entry[1]
-    const legalBalls = balls.filter(
-      (b) => b.bowler_id === bowlerId && b.is_legal_delivery
-    ).length
+    const [bowlerId, line] = entry
+    const legalBalls = balls.filter((b) => b.bowler_id === bowlerId && b.is_legal_delivery).length
     line.overs = formatOvers(legalBalls)
   }
 
   const battingLines = Array.from(batsmanMap.values())
   const bowlingLines = Array.from(bowlerMap.values()).sort((a, b) => {
-    // Sort by most wickets, then by most balls bowled
     if (b.wickets !== a.wickets) return b.wickets - a.wickets
     return a.overs.localeCompare(b.overs)
   })
 
   return (
     <div className={cn('space-y-4', className)}>
+      {/* ── Batting ── */}
       <div>
         <div className="mb-1 flex items-center justify-between">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -164,15 +165,18 @@ export function InningsSummary({
           </thead>
           <tbody>
             {battingLines.map((line) => (
-              <tr key={line.id} className="border-b border-border/40">
+              <tr key={line.id} className={cn("border-b border-border/40", line.isAtCrease && "bg-amber/5")}>
                 <td className="py-1.5 pr-3">
-                  <div className="font-medium text-foreground">{line.name}</div>
-                  <div className="text-xs text-muted-foreground">{line.dismissalNote}</div>
+                  <div className="flex items-center gap-1.5">
+                    <span className={cn("font-medium", line.isStriker ? "text-amber" : "text-foreground")}>
+                      {line.name}{line.isStriker && ' *'}
+                    </span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {line.isAtCrease ? 'batting' : line.dismissalNote}
+                  </div>
                 </td>
-                <td className={cn(
-                  'py-1.5 text-right font-mono font-bold',
-                  line.runs >= 50 ? 'text-amber' : 'text-foreground'
-                )}>
+                <td className={cn('py-1.5 text-right font-mono font-bold', line.runs >= 50 ? 'text-amber' : 'text-foreground')}>
                   {line.runs}
                 </td>
                 <td className="py-1.5 text-right font-mono text-muted-foreground">{line.balls}</td>
@@ -187,10 +191,9 @@ export function InningsSummary({
         </table>
       </div>
 
+      {/* ── Bowling ── */}
       <div>
-        <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Bowling
-        </h3>
+        <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Bowling</h3>
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-xs text-muted-foreground">
@@ -211,10 +214,7 @@ export function InningsSummary({
                   <td className="py-1.5 pr-3 font-medium text-foreground">{line.name}</td>
                   <td className="py-1.5 text-right font-mono text-muted-foreground">{line.overs}</td>
                   <td className="py-1.5 text-right font-mono text-muted-foreground">{line.runs}</td>
-                  <td className={cn(
-                    'py-1.5 text-right font-mono font-bold',
-                    line.wickets >= 3 ? 'text-boundary' : 'text-foreground'
-                  )}>
+                  <td className={cn('py-1.5 text-right font-mono font-bold', line.wickets >= 3 ? 'text-boundary' : 'text-foreground')}>
                     {line.wickets}
                   </td>
                   <td className="py-1.5 text-right font-mono text-xs text-muted-foreground">{eco}</td>
